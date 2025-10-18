@@ -1,0 +1,318 @@
+# Project Context Document
+
+## Project Overview
+**Name**: Newrality Transcribe
+**Purpose**: Self-hosted audio transcription microservice using faster-whisper (Whisper Small model). Provides drop-in replacement for OpenAI Whisper API to reduce costs and maintain data privacy for VoiceFormFiller SaaS platform. Deployed as serverless GPU-accelerated service on Google Cloud Run.
+**Demo URL**: https://newrality-transcribe-[hash].run.app (Cloud Run endpoint)
+**Status**: In Development
+
+## Architecture (High-Level)
+
+Microservizio Python standalone che espone un'API REST per trascrizione audio. Riceve file audio via multipart upload, li salva temporaneamente in memoria (tmpfs), esegue trascrizione con faster-whisper, e ritorna JSON strutturato compatibile con l'API esistente di VoiceFormFiller.
+
+**Data Flow**:
+1. Client (VoiceFormFiller Backend) invia audio via POST multipart
+2. Microservizio valida formato e API key
+3. Salva file in `/tmp` (effimero, solo RAM)
+4. Esegue trascrizione con faster-whisper small model (GPU/CPU)
+5. Ritorna JSON con testo trascritto
+6. File eliminato automaticamente (stateless)
+
+**Integration Context**:
+- Questo microservizio sostituisce le chiamate a OpenAI Whisper API
+- Il backend FastAPI di VoiceFormFiller chiamerà questo endpoint invece di OpenAI
+- In futuro, il backend FastAPI gestirà storage long-term su Dreamhost SFTP (feature separata)
+
+**Tech Stack**:
+- **Framework**: FastAPI (Python 3.11+)
+- **Trascrizione**: faster-whisper (CTranslate2)
+- **Modello**: Whisper Small (244M params, 4x real-time, int8 quantization)
+- **Deploy**: Google Cloud Run con GPU (T4)
+- **Storage**: Tmpfs in-memory (stateless, no persistent disk)
+- **Auth**: API Key (header X-API-Key)
+- **Container**: Docker con CUDA support
+
+## Credentials & Access
+
+### Google Cloud Run (Production)
+- **Project ID**: [to-be-created]
+- **Service Name**: newrality-transcribe
+- **Region**: us-central1 (GPU T4 availability)
+- **CLI**: `gcloud run deploy newrality-transcribe --region us-central1`
+- **Endpoint**: https://newrality-transcribe-[hash].run.app
+- **GPU**: NVIDIA T4 (1 GPU, 16GB VRAM)
+- **Compute Type**: int8 quantization for speed/memory optimization
+
+### GitHub
+- **Repository**: https://github.com/MyFranzDev/newrality-transcribe
+- **User**: francescozazza@gmail.com
+- **Branch Strategy**: main for production, develop for development
+- **CI/CD**: GitHub Actions for automated Cloud Run deploy (optional)
+
+### External Dependencies
+- **faster-whisper**: Python package (no API key needed)
+- **Whisper Model**: Downloaded automatically on first run from Hugging Face
+  - Model: `guillaumekln/faster-whisper-small`
+  - Cached in container image for faster cold starts
+- **API Key**: Shared secret for auth (environment variable)
+  - Same key as VoiceFormFiller backend: `vff_dev_reportbabel_demo` (dev)
+  - Production key: TBD (generate random secure key)
+
+### Integration with VoiceFormFiller
+- **Backend FastAPI**: https://github.com/MyFranzDev/ReportBabel
+- **Endpoint to replace**: OpenAI Whisper API (`client.audio.transcriptions.create()`)
+- **New endpoint**: `POST https://newrality-transcribe-[hash].run.app/api/v1/transcribe`
+- **Request format**: Same as current (multipart/form-data with audio file)
+- **Response format**: Compatible JSON structure
+
+## Code Conventions
+
+### General Principles
+- **Microservice Design**: Single responsibility (only transcription)
+- **Stateless**: No persistent storage, all data in-memory
+- **Fail-fast**: Validate early, log errors clearly
+- **Production-ready**: Proper error handling, structured logging, health checks
+- **Cost-optimized**: Aggressive cold start optimization, minimal dependencies
+
+### Python Conventions (PEP 8)
+- **Naming**: `snake_case` for everything (functions, variables, files)
+- **Modules**: Flat structure (no deep nesting)
+- **Type hints**: Use for all function signatures
+- **Logging**: Structured JSON logs with `structlog`
+- **Errors**: Raise specific exceptions with context
+
+### File Structure
+```
+newrality-transcribe/
+├── .context                    # This file
+├── README.md                   # Setup and usage docs
+├── Dockerfile                  # Multi-stage build with CUDA
+├── requirements.txt            # Python dependencies
+├── .env.example                # Example environment variables
+├── .gitignore                  # Standard Python gitignore
+├── app/
+│   ├── __init__.py
+│   ├── main.py                 # FastAPI app entry point
+│   ├── config.py               # Environment config
+│   ├── models.py               # Pydantic request/response models
+│   ├── transcription.py        # Whisper service logic
+│   ├── auth.py                 # API key validation
+│   └── utils.py                # Helpers (file validation, etc.)
+├── scripts/
+│   ├── deploy.sh               # Cloud Run deployment script
+│   ├── test_local.sh           # Local testing with Docker
+│   └── download_model.sh       # Pre-download model for Docker build
+└── tests/
+    ├── test_api.py             # API endpoint tests
+    └── test_transcription.py   # Whisper service tests
+```
+
+### Best Practices
+- **Environment variables** per tutta la configurazione (no hardcoded values)
+- **Validation**: Validare formato audio, dimensione file (<25MB), codec supportati
+- **Logging**: Log ogni richiesta con request_id per debugging
+- **Timeouts**: Set timeout Cloud Run a 300s (max 5min per trascrizione)
+- **Memory**: Request 2GB RAM + 16GB VRAM (GPU T4)
+- **Cold start**: Pre-bake model in Docker image (~2GB), evita download on-demand
+- **Error responses**: JSON strutturato con `error`, `detail`, `request_id`
+
+## Cloud Services & Infrastructure
+
+### Services to Create
+- **Cloud Run Service**: `newrality-transcribe`
+  - Region: us-central1
+  - GPU: 1x NVIDIA T4
+  - Memory: 2GB RAM
+  - CPU: 2 vCPU
+  - Timeout: 300s (5 minutes)
+  - Concurrency: 1 (one request per container, GPU exclusive)
+  - Min instances: 0 (scale to zero for cost saving)
+  - Max instances: 5 (limit concurrent GPU usage)
+  - Ingress: All (public endpoint with API key auth)
+
+- **Secret Manager** (optional, for API key):
+  - Secret: `transcribe-api-key`
+  - Value: Generated secure random key
+
+- **Container Registry**:
+  - Registry: Artifact Registry (recommended) or Container Registry
+  - Image: `gcr.io/[project-id]/newrality-transcribe:latest`
+
+### Service Endpoints
+- **Base URL**: `https://newrality-transcribe-[hash].run.app/api/v1`
+- **Endpoints**:
+  - `GET /health` - Health check (no auth)
+    - Returns: `{"status": "healthy", "model": "small", "device": "cuda"}`
+  - `POST /transcribe` - Audio transcription (requires API key)
+    - Headers: `X-API-Key: [key]`
+    - Body: `multipart/form-data` with `file` field
+    - Query params (optional):
+      - `language` (default: "it")
+      - `temperature` (default: 0.0)
+      - `beam_size` (default: 5)
+    - Returns: `{"text": "...", "language": "it", "duration": 1.23}`
+  - `GET /models` - List available models (no auth)
+    - Returns: `{"models": ["small"], "active": "small"}`
+
+### Cost Estimation (MVP Phase)
+- **Cloud Run GPU (T4)**: ~$0.50/hour runtime
+- **Storage**: ~2GB image in Artifact Registry (~$0.10/month)
+- **Network**: Egress costs minimal for JSON responses
+- **Estimated**: ~$5-20/month for low-volume testing (scale to zero helps)
+- **Production**: ~$50-200/month for moderate usage (100 requests/day)
+
+## Roadmap
+
+### Step 1: Local Development & Testing
+**Status**: In Progress
+**Goal**: Build working microservice locally with faster-whisper, validate on sample audio files
+- [ ] Initialize Python project with FastAPI + faster-whisper
+- [ ] Implement `/transcribe` endpoint with file upload and validation
+- [ ] Test faster-whisper small model locally (CPU mode first)
+- [ ] Add structured logging with request IDs
+- [ ] Implement API key authentication
+- [ ] Create health check endpoint
+- [ ] Write unit tests for core functionality
+- [ ] Test with VoiceFormFiller sample audio files
+
+### Step 2: Dockerization & GPU Support
+**Status**: Not Started
+**Goal**: Create production-ready Docker image with CUDA support and pre-baked model
+- [ ] Write multi-stage Dockerfile with CUDA base image
+- [ ] Pre-download Whisper Small model during build (avoid runtime download)
+- [ ] Optimize image size (multi-stage build, cleanup unnecessary files)
+- [ ] Test Docker image locally with GPU passthrough (if available)
+- [ ] Add environment variable configuration (.env support)
+- [ ] Document Docker build and run commands in README
+- [ ] Test cold start time (target: <30s with pre-baked model)
+
+### Step 3: Google Cloud Run Deployment
+**Status**: Not Started
+**Goal**: Deploy to Cloud Run with GPU, test end-to-end from VoiceFormFiller backend
+- [ ] Create GCP project (or use existing)
+- [ ] Enable Cloud Run API and Artifact Registry
+- [ ] Push Docker image to Artifact Registry
+- [ ] Deploy Cloud Run service with GPU (T4) configuration
+- [ ] Configure environment variables (API key, log level)
+- [ ] Set up IAM permissions (public endpoint + API key auth)
+- [ ] Test deployment with curl and sample audio
+- [ ] Update VoiceFormFiller backend to use new endpoint (config flag)
+- [ ] Run end-to-end integration test with Report Babel frontend
+
+### Step 4: Production Hardening & Monitoring
+**Status**: Not Started
+**Goal**: Add production-grade features: monitoring, rate limiting, error handling
+- [ ] Add rate limiting (per API key, e.g., 100 requests/hour)
+- [ ] Implement request timeout handling (graceful failures)
+- [ ] Add Cloud Logging integration with structured logs
+- [ ] Set up Cloud Monitoring dashboard (request count, latency, errors)
+- [ ] Add error alerting (email/Slack on high error rate)
+- [ ] Create deployment script with automated testing
+- [ ] Document rollback procedure
+- [ ] Load test with concurrent requests (validate GPU concurrency=1 behavior)
+- [ ] Create runbook for common issues
+
+### Step 5: Cost Optimization & Scaling
+**Status**: Not Started
+**Goal**: Optimize costs and prepare for SaaS scale
+- [ ] Analyze Cloud Run logs for actual usage patterns
+- [ ] Tune cold start optimization (model caching strategies)
+- [ ] Evaluate CPU-only mode for lower-priority requests (cost saving)
+- [ ] Implement request queuing for burst traffic
+- [ ] Add autoscaling policies based on usage
+- [ ] Create cost monitoring dashboard
+- [ ] Document cost per transcription metric
+- [ ] Evaluate regional deployment for latency (EU regions)
+
+### Step 6: VoiceFormFiller Backend Integration
+**Status**: Not Started
+**Goal**: Fully migrate VoiceFormFiller from OpenAI to newrality-transcribe with fallback
+- [ ] Add feature flag in VoiceFormFiller: `USE_SELF_HOSTED_WHISPER`
+- [ ] Implement fallback logic (try self-hosted, fallback to OpenAI on error)
+- [ ] Update environment variables in VoiceFormFiller backend
+- [ ] Test fallback behavior (self-hosted down → OpenAI used)
+- [ ] Monitor accuracy comparison (self-hosted vs OpenAI)
+- [ ] Gradual rollout: 10% → 50% → 100% traffic to self-hosted
+- [ ] Remove OpenAI dependency after stable production usage
+- [ ] Document cost savings achieved
+
+### Step 7: Advanced Features (Future SaaS)
+**Status**: Not Started
+**Goal**: Add advanced features for multi-tenant SaaS platform
+- [ ] Multi-model support (switch between tiny/base/small/medium dynamically)
+- [ ] Language detection before transcription (optimize model selection)
+- [ ] Speaker diarization support (who-spoke-when)
+- [ ] Timestamp output (word-level or segment-level)
+- [ ] Webhook callbacks for async transcription
+- [ ] Batch transcription endpoint (multiple files)
+- [ ] Custom vocabulary injection (medical terms, brand names)
+- [ ] Model fine-tuning pipeline for domain-specific accuracy
+
+## Commit History
+[This section will be updated by Claude Code after each commit]
+
+---
+
+## Notes for Claude Code
+
+### Before Starting Work
+- Read this entire `.context` document first
+- Verify you have access to the VoiceFormFiller backend codebase for integration reference
+- Check if Google Cloud project exists or needs creation
+- Confirm faster-whisper model can be downloaded (network access)
+
+### During Development
+- Test every endpoint manually with curl before moving to next step
+- Log everything with structured JSON for debugging
+- Commit after each working feature (granular commits)
+- Update Roadmap status as tasks are completed
+- Document any deviations from plan in commit messages
+
+### Testing Strategy
+1. **Unit tests**: Test transcription logic with mock audio
+2. **Integration tests**: Test full API with real audio samples
+3. **Local Docker tests**: Validate Dockerfile builds and runs
+4. **Cloud Run tests**: Test deployed service end-to-end
+5. **VoiceFormFiller integration**: Test from actual client
+
+### Key Design Decisions Already Made
+- ✅ faster-whisper (not OpenAI Whisper or whisper.cpp)
+- ✅ Whisper Small model (not tiny/base/medium/large)
+- ✅ Google Cloud Run with GPU T4 (not CPU-only or VM)
+- ✅ Separate microservice (not integrated in VoiceFormFiller backend)
+- ✅ API Key authentication (not OAuth or IAM-only)
+- ✅ Stateless design (no persistent storage in microservice)
+- ✅ In-memory tmpfs for audio files (not Cloud Storage)
+- ✅ HTTP REST API (not gRPC or Pub/Sub)
+
+### Common Pitfalls to Avoid
+- ❌ Don't use OpenAI Whisper (use faster-whisper)
+- ❌ Don't add persistent storage (keep stateless)
+- ❌ Don't download model on every request (bake in Docker image)
+- ❌ Don't deploy without GPU (T4 required for production speed)
+- ❌ Don't forget API key validation (security critical)
+- ❌ Don't skip health check endpoint (monitoring needs it)
+- ❌ Don't use concurrency >1 with GPU (GPU is exclusive)
+
+### Useful Resources
+- faster-whisper docs: https://github.com/SYSTRAN/faster-whisper
+- Cloud Run GPU guide: https://cloud.google.com/run/docs/configuring/services/gpu
+- VoiceFormFiller backend: `/Users/francesco/newrality/ReportBabel/backend`
+- OpenAI Whisper API reference: https://platform.openai.com/docs/api-reference/audio
+
+### When Stuck
+- Check VoiceFormFiller backend code for current OpenAI integration
+- Review Cloud Run logs for deployment errors
+- Test faster-whisper model locally first (isolate issues)
+- Validate Docker image runs locally before Cloud Run deploy
+- Consult faster-whisper GitHub issues for common problems
+
+### Demo URL
+The Cloud Run endpoint URL will be auto-generated after first deployment:
+`https://newrality-transcribe-[random-hash]-uc.a.run.app`
+
+Save this URL in VoiceFormFiller backend `.env` as:
+```bash
+TRANSCRIBE_SERVICE_URL=https://newrality-transcribe-xxx.run.app/api/v1
+TRANSCRIBE_API_KEY=vff_dev_reportbabel_demo
+```
