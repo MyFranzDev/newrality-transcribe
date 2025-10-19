@@ -393,3 +393,30 @@ curl -X POST "https://newrality-transcribe-165455809003.us-central1.run.app/api/
   -H "X-API-Key: vff_dev_reportbabel_demo" \
   -F "file=@/path/to/audio.m4a"
 ```
+
+### Email Reporting (Julia Bakker)
+
+**⚠️ PROCEDURA CORRETTA:**
+1. ✅ **INVOCARE agente Julia** (06-julia-reporter) per mandare email
+2. ✅ Julia ha il contesto giusto per scrivere il contenuto dell'email
+3. ✅ Julia usa automaticamente lo script `/tmp/send_newrality_report.py` (già configurato correttamente)
+4. ❌ NON inviare email direttamente senza Julia - lei ha il contesto del progetto
+
+**Script utilizzato da Julia:**
+- `/tmp/send_newrality_report.py` - Già aggiornato con configurazione corretta
+- Julia modificherà il contenuto dell'email in base al contesto del progetto
+- Lo script ha già header corretti, multipart, e firma HTML
+
+**Configurazione email corretta (già implementata nello script):**
+- ✅ Subject SOBRIO senza emoji (es: "Progetto Transcribe - Step X Completato")
+- ✅ Header completi: From con nome "Julia Bakker <julia.bakker@newrality.com>"
+- ✅ Reply-To: julia.bakker@newrality.com
+- ✅ Multipart: HTML + Plain Text
+- ✅ Emoji: SI nel corpo dell'email, NO nel subject
+- ✅ Firma: HTML con immagini (Julia + logo Newrality)
+
+**Credenziali SMTP:**
+- Server: smtp.dreamhost.com:587
+- Account: julia.bakker@newrality.com
+- Password: lb4g$kh$%NYyyAP@
+- Destinatario: francesco.zazza@newrality.com
