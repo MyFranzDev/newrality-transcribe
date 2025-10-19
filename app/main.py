@@ -44,6 +44,11 @@ async def lifespan(app: FastAPI):
         version=__version__,
         model=settings.whisper_model
     )
+
+    # Start loading model in background (non-blocking)
+    logger.info("Starting background model loading")
+    transcription_service.load_model_async()
+
     yield
     # Shutdown
     logger.info("Shutting down Newrality Transcribe service")
@@ -73,11 +78,22 @@ async def health_check():
     Health check endpoint (no authentication required).
 
     Returns service status and model information.
+    Returns 'healthy' immediately even if model is still loading in background.
     """
     model_info = transcription_service.get_model_info()
 
+    # Determine status: healthy if server is running (even if model is loading)
+    if transcription_service.load_error:
+        status = "unhealthy"
+    elif transcription_service.loading:
+        status = "loading"
+    elif model_info["loaded"]:
+        status = "ready"
+    else:
+        status = "starting"
+
     return HealthCheckResponse(
-        status="healthy" if model_info["loaded"] else "degraded",
+        status=status,
         model=model_info["model"],
         device=model_info["device"],
         version=__version__

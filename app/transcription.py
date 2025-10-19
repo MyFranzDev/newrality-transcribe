@@ -1,6 +1,7 @@
 """Whisper transcription service using faster-whisper."""
 
 import time
+import threading
 from typing import Optional, List, Tuple
 from faster_whisper import WhisperModel
 import structlog
@@ -19,29 +20,58 @@ class TranscriptionService:
         self.model_name = settings.whisper_model
         self.device = settings.whisper_device
         self.compute_type = settings.whisper_compute_type
-        self._load_model()
+        self.loading = False
+        self.load_error: Optional[str] = None
+        self._load_lock = threading.Lock()
 
-    def _load_model(self) -> None:
-        """Load the Whisper model on initialization."""
-        try:
-            logger.info(
-                "Loading Whisper model",
-                model=self.model_name,
-                device=self.device,
-                compute_type=self.compute_type
-            )
+    def load_model_async(self) -> None:
+        """Start loading the Whisper model in a background thread."""
+        if self.model is not None or self.loading:
+            return  # Already loaded or loading
 
-            self.model = WhisperModel(
-                self.model_name,
-                device=self.device,
-                compute_type=self.compute_type
-            )
+        def _load():
+            with self._load_lock:
+                if self.model is not None:
+                    return  # Another thread already loaded it
 
-            logger.info("Whisper model loaded successfully")
+                self.loading = True
+                try:
+                    logger.info(
+                        "Loading Whisper model in background",
+                        model=self.model_name,
+                        device=self.device,
+                        compute_type=self.compute_type
+                    )
 
-        except Exception as e:
-            logger.error("Failed to load Whisper model", error=str(e))
-            raise RuntimeError(f"Failed to load Whisper model: {str(e)}")
+                    self.model = WhisperModel(
+                        self.model_name,
+                        device=self.device,
+                        compute_type=self.compute_type
+                    )
+
+                    logger.info("Whisper model loaded successfully")
+
+                except Exception as e:
+                    error_msg = f"Failed to load Whisper model: {str(e)}"
+                    logger.error("Failed to load Whisper model", error=str(e))
+                    self.load_error = error_msg
+                finally:
+                    self.loading = False
+
+        thread = threading.Thread(target=_load, daemon=True)
+        thread.start()
+
+    def wait_for_model(self, timeout: int = 120) -> None:
+        """Wait for the model to finish loading."""
+        start_time = time.time()
+        while self.model is None and self.loading and time.time() - start_time < timeout:
+            time.sleep(0.5)
+
+        if self.load_error:
+            raise RuntimeError(self.load_error)
+
+        if self.model is None:
+            raise RuntimeError("Model loading timeout or model not started")
 
     def transcribe(
         self,
@@ -67,8 +97,10 @@ class TranscriptionService:
         Raises:
             Exception: If transcription fails
         """
+        # Wait for model to finish loading if it's still loading
         if not self.model:
-            raise RuntimeError("Whisper model not loaded")
+            logger.info("Model not ready, waiting for background loading to complete...")
+            self.wait_for_model()
 
         # Use defaults from settings if not provided
         language = language or settings.default_language
