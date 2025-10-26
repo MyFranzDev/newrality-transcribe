@@ -138,6 +138,10 @@ async def transcribe_audio(
         le=10,
         description="Beam size for decoding"
     ),
+    initial_prompt: str = Query(
+        None,
+        description="Optional text prompt to guide transcription"
+    ),
     include_segments: bool = Query(
         False,
         description="Include detailed segments with timestamps"
@@ -182,6 +186,7 @@ async def transcribe_audio(
             language=language,
             temperature=temperature,
             beam_size=beam_size,
+            initial_prompt=initial_prompt,
             include_segments=include_segments
         )
 

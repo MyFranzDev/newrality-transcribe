@@ -23,6 +23,10 @@ class TranscriptionRequest(BaseModel):
         le=10,
         description="Beam size for decoding (higher = more accurate but slower)"
     )
+    initial_prompt: Optional[str] = Field(
+        default=None,
+        description="Optional text prompt to guide transcription (e.g., 'Form with email, phone')"
+    )
 
 
 class TranscriptionSegment(BaseModel):

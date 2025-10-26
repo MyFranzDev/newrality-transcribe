@@ -79,6 +79,7 @@ class TranscriptionService:
         language: Optional[str] = None,
         temperature: Optional[float] = None,
         beam_size: Optional[int] = None,
+        initial_prompt: Optional[str] = None,
         include_segments: bool = False
     ) -> Tuple[str, str, float, Optional[List[TranscriptionSegment]]]:
         """
@@ -89,6 +90,7 @@ class TranscriptionService:
             language: Language code (e.g., 'it', 'en'). Auto-detected if None.
             temperature: Sampling temperature (0.0-1.0)
             beam_size: Beam size for decoding
+            initial_prompt: Optional text to guide transcription
             include_segments: Whether to include detailed segments in response
 
         Returns:
@@ -115,7 +117,8 @@ class TranscriptionService:
                 audio_path=audio_path,
                 language=language,
                 temperature=temperature,
-                beam_size=beam_size
+                beam_size=beam_size,
+                initial_prompt=initial_prompt
             )
 
             # Perform transcription
@@ -124,6 +127,7 @@ class TranscriptionService:
                 language=language,
                 temperature=temperature,
                 beam_size=beam_size,
+                initial_prompt=initial_prompt,
                 vad_filter=settings.enable_vad_filter,
                 word_timestamps=False  # Disable for faster processing
             )
